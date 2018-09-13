@@ -25,7 +25,7 @@ git clone https://github.com/acappati/HHbbZZAnalysis.git HHbbZZAnalysis
 (cd HHbbZZAnalysis; git checkout master)
 
 # Higgs Combination Package, Needed for the Double Crystall Ball function. 
-git clone https://github.com/cms-analysis/HiggsAnalysis-CombinedLimit.git HiggsAnalysis/CombinedLimit
+# git clone https://github.com/cms-analysis/HiggsAnalysis-CombinedLimit.git HiggsAnalysis/CombinedLimit
 
 #MELA Analytics
 git clone https://github.com/usarica/MelaAnalytics.git
