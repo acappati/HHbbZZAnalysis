@@ -46,6 +46,12 @@ declareDefault("RECORRECTMET", True, globals())
 #FSR mode
 declareDefault("FSRMODE", "RunII", globals())
 
+#Bunch spacing (can be 25 or 50)
+declareDefault("BUNCH_SPACING", 25, globals())
+
+#Mass used for SuperMELA
+declareDefault("SUPERMELA_MASS", 125, globals())
+
 #Selection flow strategy
 declareDefault("SELSETUP", "allCutsAtOncePlusSmart", globals())
 
@@ -185,6 +191,16 @@ process.triggerMETFilters = cms.Path(process.METFilters)
 ### MC Filters and tools
 ### ----------------------------------------------------------------------
 
+process.heavyflavorfilter = cms.EDFilter('HeavyFlavorFilter2',
+#                                 src= cms.InputTag("genParticles"), # genParticles available only in PAT
+                                 src= cms.InputTag("prunedGenParticles"),
+                                 status2 = cms.bool(True),
+                                 status3 = cms.bool(False),
+                                 hDaughterVeto = cms.bool(False),
+                                 zDaughterVeto = cms.bool(True),
+                                 ptcut=cms.double(0)
+                                 )
+
 
 process.load("SimGeneral.HepPDTESSource.pythiapdt_cfi")
 process.drawTree = cms.EDAnalyzer("ParticleTreeDrawer",
@@ -223,7 +239,7 @@ process.goodPrimaryVertices = cms.EDFilter("VertexSelector",
 process.zJetsFilter = cms.EDFilter("ZJetsFilterMerger",
   theLHESrc = cms.InputTag('externalLHEProducer'),
   theGenSrc = cms.InputTag('prunedGenParticles'),
-  option = cms.untracked.int32(0),   #to activate the filtering put 1, 2, 3 options 
+  option = cms.untracked.int32(0),
 )
 
 
@@ -390,6 +406,10 @@ if (LEPTON_SETUP == 2017):
         recHitCollectionEB = cms.InputTag('reducedEgamma:reducedEBRecHits'),
         recHitCollectionEE = cms.InputTag('reducedEgamma:reducedEERecHits')
    )
+
+
+if (BUNCH_SPACING == 50):
+    process.calibratedPatElectrons.grbForestName = cms.string("gedelectron_p4combination_50ns")
 
 
 if (LEPTON_SETUP <= 2017) :
@@ -659,6 +679,7 @@ else:
     else : # Just keep combinations of tight leptons (passing ID and SIP; iso cannot be required at this point, with the legacy FSR logic)
         process.bareZCand.cut = cms.string("mass > 0 && abs(daughter(0).pdgId())==abs(daughter(1).pdgId()) && daughter(0).masterClone.userFloat('isGood') && daughter(1).masterClone.userFloat('isGood')")
 
+
 process.ZCand = cms.EDProducer("ZCandidateFiller",
     src = cms.InputTag("bareZCand"),
     sampleType = cms.int32(SAMPLE_TYPE),
@@ -672,329 +693,6 @@ process.ZCand = cms.EDProducer("ZCandidateFiller",
     )
 )
 
-
-# ll, same flavour/any charge, for control regions only
-process.bareLLCand = cms.EDProducer("CandViewShallowCloneCombiner",
-    decay = cms.string('softLeptons softLeptons'),
-    #cut = cms.string('deltaR(daughter(0).eta, daughter(0).phi, daughter(1).eta, daughter(1).phi)>0.02'), # protect against ghosts
-    cut = cms.string('deltaR(daughter(0).eta, daughter(0).phi, daughter(1).eta, daughter(1).phi)>0.02 && abs(daughter(0).pdgId())==abs(daughter(1).pdgId())'), # protect against ghosts && same flavour
-    checkCharge = cms.bool(False)
-)
-process.LLCand = cms.EDProducer("ZCandidateFiller",
-    src = cms.InputTag("bareLLCand"),
-    sampleType = cms.int32(SAMPLE_TYPE),
-    setup = cms.int32(LEPTON_SETUP), # define the set of effective areas, rho corrections, etc.
-    bestZAmong = cms.string(BESTZ_AMONG),
-    FSRMode = cms.string(FSRMODE), # "skip", "Legacy", "RunII"
-    flags = cms.PSet(
-        GoodLeptons = cms.string(ZLEPTONSEL),
-        Z1Presel = cms.string(Z1PRESEL),
-    )
-)
-
-
-### ----------------------------------------------------------------------
-### TriLeptons (for fake rate)
-### ----------------------------------------------------------------------
-Z_PLUS_LEP_MIJ=("sqrt(pow(daughter(0).daughter({0}).energy+daughter(1).energy, 2) - " +
-                "     pow(daughter(0).daughter({0}).px    +daughter(1).px, 2) -" +
-                "     pow(daughter(0).daughter({0}).py    +daughter(1).py, 2) -" +
-                "     pow(daughter(0).daughter({0}).pz    +daughter(1).pz, 2))")
-
-process.ZlCand = cms.EDProducer("PATCandViewShallowCloneCombiner",
-    decay = cms.string('ZCand softLeptons'),
-    cut = cms.string("deltaR(daughter(0).daughter(0).eta, daughter(0).daughter(0).phi, daughter(1).eta, daughter(1).phi)>0.02 &&" + # Ghost suppression
-                     "deltaR(daughter(0).daughter(1).eta, daughter(0).daughter(1).phi, daughter(1).eta, daughter(1).phi)>0.02 &&" +
-                     ("(daughter(0).daughter(0).charge == daughter(1).charge || %s > 4) && " % ( Z_PLUS_LEP_MIJ.format(0))) +       # mLL>4 for the OS pair (Giovanni's impl)
-                     ("(daughter(0).daughter(1).charge == daughter(1).charge || %s > 4) && " % ( Z_PLUS_LEP_MIJ.format(1))) +
-                     "daughter(0).masterClone.userFloat('isBestZ') &&" + # This includes the Z1 isolation requirement
-                     "daughter(0).masterClone.userFloat('Z1Presel')"
-                     ),
-    checkCharge = cms.bool(False)
-)
-
-
-### ----------------------------------------------------------------------
-### Quadrileptons: combine/merge leptons into intermediate (bare) collections;
-###                Embed additional user variables into final collections
-### ----------------------------------------------------------------------
-
-FOURGOODLEPTONS    =  ("userFloat('d0.GoodLeptons') && userFloat('d1.GoodLeptons')" +
-                       "&& userFloat('d0.worstEleIso') <" + str(ELEISOCUT) +
-                       "&& userFloat('d1.worstEleIso') <" + str(ELEISOCUT) +
-                       "&& userFloat('d0.worstMuIso') <" + str(MUISOCUT) +
-                       "&& userFloat('d1.worstMuIso') <" + str(MUISOCUT)
-                       ) #ZZ made of 4 tight leptons passing SIP and ISO
-
-
-Z1MASS            = "daughter('Z1').mass>40 && daughter('Z1').mass<120"
-Z2MASS            = "daughter('Z2').mass>4  && daughter('Z2').mass<120" # (was > 4 in Synch) to deal with m12 cut at gen level
-#MLL3On4_12        = "userFloat('mZa')>12" # mll>12 on 3/4 pairs;
-#MLLALLCOMB        = "userFloat('mLL6')>4" # mll>4 on 6/6 AF/AS pairs;
-MLLALLCOMB        = "userFloat('mLL4')>4" # mll>4 on 4/4 AF/OS pairs;
-SMARTMALLCOMB     = "userFloat('passSmartMLL')" # Require swapped-lepton Z2' to be >12 IF Z1' is SF/OS and closer to 91.1876 than mZ1
-PT20_10           = ("userFloat('pt1')>20 && userFloat('pt2')>10") #20/10 on any of the 4 leptons
-M4l100            = "mass>100"
-
-
-
-
-if SELSETUP=="Legacy": # Default Configuration (Legacy paper): cut on selected best candidate
-    print "SELSETUP=Legacy no longer supported after 8fb591a because we now set combRelIsoPFFSRCorr at the level of ZZ; will need to re-introduce it at  the Z level so that ZZCand.bestZAmong (ie isBestZ flag) works again as before"
-    sys.exit()
-    HASBESTZ          = "daughter('Z1').masterClone.userFloat('isBestZ')"
-    BESTCAND_AMONG = (FOURGOODLEPTONS + "&&" +
-                      HASBESTZ        + "&&" +
-                      Z1MASS
-                      )
-
-    SR           = (FOURGOODLEPTONS + "&&" +
-                           HASBESTZ        + "&&" +
-                           Z1MASS          + "&&" +
-                           Z2MASS          + "&&" +
-                           MLLALLCOMB      + "&&" +
-                           PT20_10         + "&&" +
-                           "mass>70"        + "&&" +
-                           "daughter('Z2').mass>12")
-
-
-elif SELSETUP=="allCutsAtOnce": # Select best candidate among those passing all cuts
-
-    BESTCAND_AMONG = (FOURGOODLEPTONS + "&&" +
-                      Z1MASS          + "&&" +
-                      Z2MASS          + "&&" +
-                      MLLALLCOMB      + "&&" +
-                      PT20_10         + "&&" +
-                      "mass>70"       + "&&" +
-                      "daughter('Z2').mass>12"
-                      )
-
-    SR = BESTCAND_AMONG
-
-
-
-elif SELSETUP=="allCutsAtOnceButMZ2": # Select best candidate among those passing all cuts except mZ2, leave only mZ2 cut at the end
-
-    BESTCAND_AMONG = (FOURGOODLEPTONS + "&&" +
-                      Z1MASS          + "&&" +
-                      Z2MASS          + "&&" +
-                      MLLALLCOMB      + "&&" +
-                      PT20_10         + "&&" +
-                      "mass>70"
-                      )
-
-    SR           = (BESTCAND_AMONG + "&&" +
-                           "daughter('Z2').mass>12")
-
-
-
-elif SELSETUP=="allCutsAtOncePlusMZb": # Apply also cut on mZb, -> expected to reduce the background but also signal efficiency
-
-    BESTCAND_AMONG = (FOURGOODLEPTONS + "&&" +
-                      Z1MASS          + "&&" +
-                      Z2MASS          + "&&" +
-                      MLLALLCOMB      + "&&" +
-                      PT20_10         + "&&" +
-                      "mass>70"       + "&&" +
-                      "userFloat('mZb')>12" + "&&" +
-                      "daughter('Z2').mass>12"
-                      )
-
-    SR = BESTCAND_AMONG
-
-elif SELSETUP=="allCutsAtOncePlusSmart": # Apply smarter mZb cut
-
-    BESTCAND_AMONG = (FOURGOODLEPTONS + "&&" +
-                      Z1MASS          + "&&" +
-                      Z2MASS          + "&&" +
-                      MLLALLCOMB      + "&&" +
-                      PT20_10         + "&&" +
-                      "mass>70"       + "&&" +
-                      SMARTMALLCOMB + "&&" +
-                      "daughter('Z2').mass>12"
-                      )
-
-    SR = BESTCAND_AMONG
-
-
-else:
-    print "Please choose one of the following string for SELSETUP: 'Legacy', 'allCutsAtOnceButMZ2', 'allCutsAtOnce', 'allCutsAtOncePlusMZb', 'allCutsAtOncePlusSmart'"
-    sys.exit()
-
-
-FULLSEL            = (SR      + "&&" +
-                      M4l100)
-
-
-# Ghost Suppression cut
-NOGHOST4l = ("deltaR(daughter(0).daughter(0).eta, daughter(0).daughter(0).phi, daughter(1).daughter(0).eta, daughter(1).daughter(0).phi)>0.02 &&"+
-             "deltaR(daughter(0).daughter(0).eta, daughter(0).daughter(0).phi, daughter(1).daughter(1).eta, daughter(1).daughter(1).phi)>0.02 &&"+
-             "deltaR(daughter(0).daughter(1).eta, daughter(0).daughter(1).phi, daughter(1).daughter(0).eta, daughter(1).daughter(0).phi)>0.02 &&"+
-             "deltaR(daughter(0).daughter(1).eta, daughter(0).daughter(1).phi, daughter(1).daughter(1).eta, daughter(1).daughter(1).phi)>0.02") # protect against ghosts
-
-
-# Preselection of 4l candidates
-LLLLPRESEL = NOGHOST4l # Just suppress candidates with overlapping leptons
-
-#LLLLPRESEL = (NOGHOST4l + "&&" +
-#              FOURGOODLEPTONS) # Only retain candidates with 4 tight leptons (ID, iso, SIP)
-
-
-# ZZ Candidates
-if FSRMODE == "Legacy":
-    print "\nERROR: FSRMODE=Legacy is no longer supported. Aborting...\n"
-    exit(1)
-
-
-process.bareZZCand= cms.EDProducer("CandViewShallowCloneCombiner",
-    decay = cms.string('ZCand ZCand'),
-    cut = cms.string(LLLLPRESEL),
-    checkCharge = cms.bool(True)
-)
-process.ZZCand = cms.EDProducer("ZZCandidateFiller",
-    src = cms.InputTag("bareZZCand"),
-    sampleType = cms.int32(SAMPLE_TYPE),
-    setup = cms.int32(LEPTON_SETUP),
-    superMelaMass = cms.double(SUPERMELA_MASS),
-    isMC = cms.bool(IsMC),
-    bestCandAmong = cms.PSet(isBestCand = cms.string(BESTCAND_AMONG)),
-    bestCandComparator = cms.string(BESTCANDCOMPARATOR),
-    ZRolesByMass = cms.bool(True),
-    doKinFit = cms.bool(KINREFIT),
-    flags = cms.PSet(
-        GoodLeptons =  cms.string(FOURGOODLEPTONS),
-        Z2Mass  = cms.string(Z2MASS),
-        MAllComb = cms.string(MLLALLCOMB),
-        SR = cms.string(SR),
-        FullSel70 = cms.string(SR), #Obsolete, use "SR"
-        FullSel = cms.string(FULLSEL),
-    ),
-    recoProbabilities = cms.vstring(),
-    #These are actually no longer needed after we dropped the Legacy FSR algorithm
-    muon_iso_cut = cms.double(MUISOCUT),
-    electron_iso_cut = cms.double(ELEISOCUT),
-)
-
-
-
-### ----------------------------------------------------------------------
-### Z+LL Control regions.
-### By constryction, daughter(0) is the Z, daughter(1) the LL pair.
-### By setting ZRolesByMass = False, daugther('Z1') is set as daughter(0),
-### so we can use the same cuts as for the SR.
-### ----------------------------------------------------------------------
-
-Z2MM = "abs(daughter(1).daughter(0).pdgId()*daughter(1).daughter(1).pdgId())==169" #Z2 = mumu
-Z2EE = "abs(daughter(1).daughter(0).pdgId()*daughter(1).daughter(1).pdgId())==121" #Z2 = ee
-Z2LL_SS = "daughter(1).daughter(0).pdgId()==daughter(1).daughter(1).pdgId()"       #Z2 = same-sign, same-flavour
-Z2LL_OS = "(daughter(1).daughter(0).pdgId + daughter(1).daughter(1).pdgId) == 0"   #Z2 = l+l-
-Z2MM_OS = "daughter(1).daughter(0).pdgId()*daughter(1).daughter(1).pdgId()==-169" #Z2 = mu+mu-
-Z2MM_SS = "daughter(1).daughter(0).pdgId()*daughter(1).daughter(1).pdgId()== 169" #Z2 = mu-mu-/mu+mu+
-Z2EE_OS = "daughter(1).daughter(0).pdgId()*daughter(1).daughter(1).pdgId()==-121" #Z2 = e+e-
-Z2EE_SS = "daughter(1).daughter(0).pdgId()*daughter(1).daughter(1).pdgId()== 121" #Z2 = e-e-/e+e+
-Z2ID    = "userFloat('d1.d0.ID')     && userFloat('d1.d1.ID')"                    #ID on LL leptons
-Z2SIP   = "userFloat('d1.d0.SIP')< 4 && userFloat('d1.d1.SIP')< 4"                #SIP on LL leptons
-CR_Z2MASS = "daughter(1).mass>4  && daughter(1).mass<120"                        #Mass on LL; cut at 4
-
-
-# Define cuts for selection of the candidates among which the best one is chosen.
-CR_BESTCANDBASE = ("userFloat('d0.Z1Presel') && userFloat('d0.worstEleIso') <" + str(ELEISOCUT) +
-                   "&& userFloat('d0.worstMuIso') <" + str(MUISOCUT) ) # To be revised
-
-CR_BESTCANDBASE_AA   = ("userFloat('d0.Z1Presel') && userFloat('d0.worstEleIso') <" + str(ELEISOCUT) +
-                        "&& userFloat('d0.worstMuIso') <" + str(MUISOCUT) + "&&" +
-                        Z2SIP) # base for AA CR: # Z1 with tight leptons passing SIP and ISO, mass cuts; SIP on Z2
-
-
-CR_BESTZLLss = ""
-if SELSETUP == "Legacy":
-    # No longer supported; cf comment for "Legacy" in the SR.
-    CR_BESTZLLss = CR_BESTCANDBASE_AA + "&&" + "userFloat('d0.isBestZ') &&"+ Z2LL_SS
-elif SELSETUP == "allCutsAtOnceButMZ2":
-    CR_BESTZLLss = CR_BESTCANDBASE_AA + "&&" + Z2LL_SS + "&&" +CR_Z2MASS + "&&" + MLLALLCOMB + "&&" + PT20_10 + "&& mass>70"
-elif SELSETUP == "allCutsAtOnce":
-    CR_BESTZLLss = CR_BESTCANDBASE_AA + "&&" + Z2LL_SS + "&&" +CR_Z2MASS + "&&" + MLLALLCOMB + "&&" + PT20_10 + "&&" + "mass>70" + "&&" + "daughter(1).mass>12"
-elif SELSETUP == "allCutsAtOncePlusMZb":
-    CR_BESTZLLss = CR_BESTCANDBASE_AA + "&&" + Z2LL_SS + "&&" +CR_Z2MASS + "&&" + MLLALLCOMB + "&&" + PT20_10 + "&&" + "mass>70" + "&&" + "daughter(1).mass>12" + "&&" + "userFloat('mZb')>12"
-elif SELSETUP == "allCutsAtOncePlusSmart":
-    CR_BESTZLLss = CR_BESTCANDBASE_AA + "&&" + Z2LL_SS + "&&" +CR_Z2MASS + "&&" + MLLALLCOMB + "&&" + PT20_10 + "&&" + "mass>70" + "&&" + "daughter(1).mass>12" + "&&" + SMARTMALLCOMB
-
-
-# Base for the selection cut applied on the best candidate. This almost fully (except for M4l100) overlaps with the cuts defined above, except for startegies where the best candidate is chosen at the beginning (Legacy, allCutsAtOnceButMZ2).
-CR_BASESEL = (CR_Z2MASS + "&&" +              # mass cuts on LL
-              MLLALLCOMB + "&&" +             # mass cut on all lepton pairs
-              PT20_10    + "&&" +             # pT> 20/10 over all 4 l
-              "daughter(1).mass>12 &&" +      # mZ2 >12
-              "mass>70" )                     # m4l cut
-
-##### CR based on Z+2 opposite sign leptons that pass the loose selection #####
-
-# check weather the 2 leptons from Z2 pass the tight selection
-PASSD0 = "(userFloat('d1.d0.isGood') && userFloat('d1.d0.passCombRelIsoPFFSRCorr'))" # FIXME, passCombRelIsoPFFSRCorr result is hard coded
-PASSD1 = "(userFloat('d1.d1.isGood') && userFloat('d1.d1.passCombRelIsoPFFSRCorr'))" # FIXME, passCombRelIsoPFFSRCorr result is hard coded
-# ... and fill some useful variable needed for the CR logic
-FAILD0 = "!" + PASSD0
-FAILD1 = "!" + PASSD1
-BOTHFAIL = FAILD0 + "&&" + FAILD1
-BOTHPASS = PASSD0 + "&&" + PASSD1
-PASSD0_XOR_PASSD1 = "((" + PASSD0 + "&&" + FAILD1 + ") || (" + PASSD1 + "&&" + FAILD0 + "))"
-PASSD0_OR_PASSD1  = "(" + PASSD0 + "||" + PASSD1 + ")"
-
-
-CR_BESTZLLos = (CR_BESTCANDBASE_AA    + "&&" +
-                CR_BASESEL            + "&&" +
-                Z2LL_OS               + "&&" +
-                SMARTMALLCOMB         )
-
-# CR 3P1F
-CR_BESTZLLos_3P1F = (CR_BESTZLLos + "&&" + PASSD0_OR_PASSD1)
-CR_ZLLosSEL_3P1F  = (CR_BESTZLLos + "&&" + PASSD0_XOR_PASSD1) # Is the CR_BESTZLLos request redundant?
-
-
-# CR 2P2F
-CR_BESTZLLos_2P2F   = (CR_BESTZLLos)
-CR_ZLLosSEL_2P2F    = (CR_BESTZLLos + "&&" + BOTHFAIL)  # Is the CR_BESTZLLos request redundant?
-
-################################################################################
-
-#Prefix for Z2 daughters, to be used in the "cut" string
-#D1D0 = "daughter(1).daughter(0).masterClone"
-#D1D1 = "daughter(1).daughter(1).masterClone"
-
-# Z (OSSF,both e/mu) + LL (any F/C, with no ID/iso); this is the starting point for control regions
-process.bareZLLCand= cms.EDProducer("CandViewShallowCloneCombiner",
-    decay = cms.string('ZCand LLCand'),
-    cut = cms.string(NOGHOST4l),
-#                     "&& !(" + Z2LL_OS + "&&" + D1D0+".userFloat('isGood')&&"+D1D1+".userFloat('isGood')&&"+D1D0+".userFloat('passCombRelIsoPFFSRCorr')&&"+D1D1+".userFloat('passCombRelIsoPFFSRCorr'))"), # Reject OS tight combinations. Note that BOTHFAIL cannot be used here ("d0.d1.xxx" is available only in and after ZZCandidateFiller.
-    checkCharge = cms.bool(False)
-)
-process.ZLLCand = cms.EDProducer("ZZCandidateFiller",
-    src = cms.InputTag("bareZLLCand"),
-    sampleType = cms.int32(SAMPLE_TYPE),
-    setup = cms.int32(LEPTON_SETUP),
-    superMelaMass = cms.double(SUPERMELA_MASS),
-    isMC = cms.bool(IsMC),
-    bestCandComparator = cms.string(BESTCANDCOMPARATOR),
-    bestCandAmong = cms.PSet(
-      isBestCand    = cms.string("0"), #do not set SR best cand flag
-      isBestCRZLLss = cms.string(CR_BESTZLLss),
-      isBestCRZLLos_2P2F = cms.string(CR_BESTZLLos_2P2F),
-      isBestCRZLLos_3P1F = cms.string(CR_BESTZLLos_3P1F)
-
-    ),
-    ZRolesByMass = cms.bool(False),  # daughter('Z1') = daughter(0)
-    doKinFit = cms.bool(KINREFIT),
-    flags = cms.PSet(
-      SR = cms.string(SR),
-      CRZLLss = cms.string(CR_BASESEL),             #combine with proper isBestCRZLLss for AA ss/os CRss
-      CRZLLos_2P2F = cms.string(CR_ZLLosSEL_2P2F),
-      CRZLLos_3P1F = cms.string(CR_ZLLosSEL_3P1F),
-    ),
-    recoProbabilities = cms.vstring(),
-    #These are actually no longer needed after we dropped the Legacy FSR algorithm
-    muon_iso_cut = cms.double(MUISOCUT),
-    electron_iso_cut = cms.double(ELEISOCUT),
-)
 
 
 
@@ -1142,10 +840,87 @@ if FSRMODE=="Legacy" :
 
 
 ### ----------------------------------------------------------------------
+### Fat jets
+### ----------------------------------------------------------------------
+
+### reapply JEC
+from PhysicsTools.SelectorUtils.pfJetIDSelector_cfi import pfJetIDSelector
+
+process.patJetCorrFactorsReapplyJECFat = updatedPatJetCorrFactors.clone(
+                                    src     = cms.InputTag("slimmedJetsAK8"),
+                                    levels  = ['L1FastJet','L2Relative','L3Absolute'],
+                                    payload = 'AK8PFchs')
+
+process.patJetsReapplyJECFat = updatedPatJets.clone(
+                                    jetSource = cms.InputTag("slimmedJetsAK8"),
+                                    jetCorrFactorsSource = cms.VInputTag(cms.InputTag("patJetCorrFactorsReapplyJECFat") ))
+
+### FIXME: should we be dressing the fat jets as well?
+process.goodJetsFat = cms.EDFilter("PFJetIDSelectionFunctorFilter",
+                         filterParams = pfJetIDSelector.clone(),
+                         src = cms.InputTag("patJetsReapplyJECFat"),
+                         filter = cms.bool(True) )
+
+# Clean jets wrt. good (preFSR-)isolated leptons
+process.cleanJetsFat = cms.EDProducer("JetsWithLeptonsRemover",
+                                   Jets      = cms.InputTag("goodJetsFat"),
+                                   Muons     = cms.InputTag("appendPhotons:muons"),
+                                   Electrons = cms.InputTag("appendPhotons:electrons"),
+                                   Diboson   = cms.InputTag(""),
+                                   JetPreselection      = cms.string(""),
+                                   MuonPreselection     = cms.string("userFloat('isGood') && userFloat('passCombRelIsoPFFSRCorr')"),
+                                   ElectronPreselection = cms.string("userFloat('isGood') && userFloat('passCombRelIsoPFFSRCorr')"),
+                                   DiBosonPreselection  = cms.string(""),
+                                   MatchingType = cms.string("byDeltaR"),
+                                   DeltaRCut = cms.untracked.double(0.8),  
+                                   cleanFSRFromLeptons = cms.bool(True),
+                                   DebugPlots = cms.untracked.bool(False)
+                                   )
+
+process.corrJetsProducer = cms.EDProducer ( "CorrJetsProducer",
+                                    jets    = cms.InputTag( "cleanJetsFat" ),
+                                    vertex  = cms.InputTag( "goodPrimaryVertices" ), 
+                                    rho     = cms.InputTag( "fixedGridRhoFastjetAll"   ),
+                                    payload = cms.string  ( "AK8PFchs" ),
+                                    isData  = cms.bool    (  False ))
+
+if FSRMODE=="Legacy" :
+    process.cleanJetsFat.MuonPreselection     = "userFloat('isGood') && userFloat('isIsoFSRUncorr')"
+    process.cleanJetsFat.ElectronPreselection = "userFloat('isGood') && userFloat('isIsoFSRUncorr')"
+    process.cleanJetsFat.cleanFSRFromLeptons = False
+
+
+### ----------------------------------------------------------------------
+### 2l2j cand
+### ----------------------------------------------------------------------
+
+process.bareZjjCand = cms.EDProducer("CandViewShallowCloneCombiner",
+    decay = cms.string('cleanJets cleanJets'),
+    cut = cms.string('pt>100 && mass>40 && mass <180'), # protect against ghosts
+    checkCharge = cms.bool(False)
+)
+process.ZjjCand = cms.EDProducer("ZCandidateFiller",
+    src = cms.InputTag("bareZjjCand"),
+    sampleType = cms.int32(SAMPLE_TYPE),  
+    embedDaughterFloats = cms.untracked.bool(True),                   
+    setup = cms.int32(LEPTON_SETUP), # define the set of effective areas, rho corrections, etc.
+    bestZAmong = cms.string(BESTZ2_AMONG),
+    FSRMode = cms.string("skip"), # "skip", "Legacy", "RunII"
+    flags = cms.PSet(
+        GoodLeptons = cms.string('0'),
+        Z1Presel = cms.string(Z2PRESEL),
+    )
+)
+
+
+
+
+### ----------------------------------------------------------------------
 ### Missing ET
 ### ----------------------------------------------------------------------
 
 metTag = cms.InputTag("slimmedMETsMuEGClean")
+
 
 ### Recorrect MET, cf. https://indico.cern.ch/event/759372/contributions/3149378/attachments/1721436/2779341/metreport.pdf slide 10
 ###                and https://twiki.cern.ch/twiki/bin/viewauth/CMS/MissingETUncertaintyPrescription#Instructions_for_9_4_X_X_9_for_2
@@ -1156,10 +931,10 @@ if (RECORRECTMET and SAMPLE_TYPE == 2017):
     runMetCorAndUncFromMiniAOD(process,
                                isData=(not IsMC),
                                fixEE2017 = True,
-                               fixEE2017Params = {'userawPt': True, 'PtThreshold':50.0, 'MinEtaThreshold':2.65, 'MaxEtaThreshold': 3.139} ,
+                               fixEE2017Params = {'userawPt': True, 'ptThreshold':50.0, 'minEtaThreshold':2.65, 'maxEtaThreshold': 3.139} ,
                                postfix = "ModifiedMET"
                                )
-    metTag = cms.InputTag("slimmedMETsModifiedMET","","ZZ")
+    metTag = cms.InputTag("slimmedMETsModifiedMET","","bbZZ")
 	 
     ### somehow MET recorrection gets this lost again...
     process.patJetsReapplyJEC.userData.userFloats.src += ['pileupJetIdUpdated:fullDiscriminant']
@@ -1184,18 +959,17 @@ if (RECORRECTMET and SAMPLE_TYPE == 2017):
     else:
         process.MET = cms.Path(process.fullPatMetSequenceModifiedMET)
 
-
 ### ----------------------------------------------------------------------
 ### Filters
 ### ----------------------------------------------------------------------
 ### Create filter for events with one candidate in the SR
 process.ZZCandSR = cms.EDFilter("PATCompositeCandidateRefSelector",
-    src = cms.InputTag("ZZCand"),
-    cut = cms.string(SR) # That is, all candidates with m4l>70
+    src = cms.InputTag("bbZZCand"),
+    cut = cms.string(SR) # That is, all candidates with mZ1>70 ... #FIXME: to be defined
  )
 
-process.ZZCandFilter = cms.EDFilter("CandViewCountFilter",
-                                src = cms.InputTag("ZZCandSR"),
+process.bbZZCandFilter = cms.EDFilter("CandViewCountFilter",
+                                src = cms.InputTag("bbZZCandSR"),
                                 minNumber = cms.uint32(1)
                             )
 
@@ -1207,27 +981,14 @@ process.Candidates = cms.Path(
        process.appendPhotons     +
        process.softLeptons       +
        process.cleanJets         +
+       process.cleanJetsFat      + process.corrJetsProducer + 
 # Build 4-lepton candidates
        process.bareZCand         + process.ZCand     +
-       process.bareZZCand        + process.ZZCand
+       process.bareZjjCand       + process.ZjjCand   +  
+       process.bareZZCand        + process.ZZCand    +
+       process.bareZZCandFat     + process.ZZCandFat
     )
 
-# Optional sequence to build control regions. To get it, add
-#process.CRPath = cms.Path(process.CRZl) # only trilepton
-#OR
-#process.CRPath = cms.Path(process.CR)   # trilep+4lep CRs
-
-process.CRZl = cms.Sequence(
-       process.bareZCand         + process.ZCand     +
-       process.ZlCand
-   )
-
-process.CR = cms.Sequence(
-       process.bareZCand         + process.ZCand     +
-       process.bareLLCand        + process.LLCand    +
-       process.bareZLLCand       + process.ZLLCand   +
-       process.ZlCand
-   )
 
 
 ### Skim, triggers and MC filters (Only store filter result, no filter is applied)
