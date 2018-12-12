@@ -749,7 +749,7 @@ process.dressedJets = cms.EDProducer("JetFiller",
     bTagMCEffFile = cms.string("HHbbZZAnalysis/AnalysisStep/data/BTagging/bTagEfficiencies_80X_ICHEP.root"),
     flags = cms.PSet()
     )
-if (LEPTON_SETUP == 2017):
+if (LEPTON_SETUP == 2017 || LEPTON_SETUP == 2018):           #FIXME: 2018 version to be updated
     process.dressedJets.bTaggerName = cms.string("pfDeepCSVJetTags:probb") #Moving to Moriond18 new recommended DeepCSV btagger
     process.dressedJets.bTaggerThreshold = cms.double(0.4941) #https://twiki.cern.ch/twiki/bin/viewauth/CMS/BtagRecommendation94X
     process.dressedJets.bTagSFFile =  cms.string("HHbbZZAnalysis/AnalysisStep/data/BTagging/DeepCSV_94XSF_V1_B_F.csv")
@@ -891,24 +891,26 @@ if FSRMODE=="Legacy" :
 
 
 ### ----------------------------------------------------------------------
-### 2l2j cand
+### H->bb cand
 ### ----------------------------------------------------------------------
 
-process.bareZjjCand = cms.EDProducer("CandViewShallowCloneCombiner",
+BESTBB_AMONG = ( "userFloat('d0.isBtagged') && userFloat('d1.isBtagged')" )
+
+process.barebbCand = cms.EDProducer("CandViewShallowCloneCombiner",
     decay = cms.string('cleanJets cleanJets'),
-    cut = cms.string('pt>100 && mass>40 && mass <180'), # protect against ghosts
+    cut = cms.string('mass>40 && mass <180'), # loose mass requirement
     checkCharge = cms.bool(False)
 )
-process.ZjjCand = cms.EDProducer("ZCandidateFiller",
-    src = cms.InputTag("bareZjjCand"),
+process.bbCand = cms.EDProducer("ZCandidateFiller",#FIXME: define new 2-object candidate filler (or 2 jet candidate filler)
+    src = cms.InputTag("barebbCand"),
     sampleType = cms.int32(SAMPLE_TYPE),  
     embedDaughterFloats = cms.untracked.bool(True),                   
     setup = cms.int32(LEPTON_SETUP), # define the set of effective areas, rho corrections, etc.
-    bestZAmong = cms.string(BESTZ2_AMONG),
+    bestZAmong = cms.string(BESTBB_AMONG), #FIXME: to verify if it works... 
     FSRMode = cms.string("skip"), # "skip", "Legacy", "RunII"
     flags = cms.PSet(
         GoodLeptons = cms.string('0'),
-        Z1Presel = cms.string(Z2PRESEL),
+        Z1Presel = cms.string(""),
     )
 )
 
@@ -982,11 +984,8 @@ process.Candidates = cms.Path(
        process.softLeptons       +
        process.cleanJets         +
        process.cleanJetsFat      + process.corrJetsProducer + 
-# Build 4-lepton candidates
        process.bareZCand         + process.ZCand     +
-       process.bareZjjCand       + process.ZjjCand   +  
-       process.bareZZCand        + process.ZZCand    +
-       process.bareZZCandFat     + process.ZZCandFat
+       process.barebbCand        + process.bbCand
     )
 
 
